@@ -1,0 +1,24 @@
+name: Build AyuGram
+
+on:
+  push:
+    branches: [ main, dev ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Prepare
+        shell: cmd
+        run: call Telegram\build\prepare\win.bat
+      - name: Configure
+        shell: cmd
+        run: |
+          cd Telegram
+          call configure.bat x64 -D TDESKTOP_API_ID=2040 -D TDESKTOP_API_HASH=b18441a1ff607e10a989891a5462e627
+      - name: Build
+        run: cmake --build out --config Release
