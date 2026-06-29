@@ -166,6 +166,10 @@ set(ayugram_files
         ayu/ui/settings/settings_main.h
         ayu/ui/settings/settings_other.cpp
         ayu/ui/settings/settings_other.h
+        ayu/ui/settings/settings_plugins.cpp
+        ayu/ui/settings/settings_plugins.h
+        ayu/features/plugins/plugins_engine.cpp
+        ayu/features/plugins/plugins_engine.h
         ayu/ui/settings/filters/settings_filters_list.cpp
         ayu/ui/settings/filters/settings_filters_list.h
         ayu/ui/settings/filters/per_dialog_filter.cpp

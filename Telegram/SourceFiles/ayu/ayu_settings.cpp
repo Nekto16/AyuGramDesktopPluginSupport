@@ -562,6 +562,38 @@ void AyuSettings::setFiltersEnabledInChats(bool val) {
 	save();
 }
 
+void AyuSettings::setPluginsEnabled(bool val) {
+	if (_pluginsEnabled.current() == val) return;
+	_pluginsEnabled = val;
+	save();
+}
+
+QString AyuSettings::pluginsDirectory() {
+	return cWorkingDir() + u"tdata/ayu_plugins/"_q;
+}
+
+void AyuSettings::installPlugin(const InstalledPlugin &plugin) {
+	getInstance()._installedPlugins[plugin.id] = plugin;
+	getInstance()._pluginsChanged.fire({});
+	save();
+}
+
+void AyuSettings::uninstallPlugin(const QString &id) {
+	getInstance()._installedPlugins.erase(id);
+	getInstance()._pluginsChanged.fire({});
+	save();
+}
+
+void AyuSettings::setPluginEnabled(const QString &id, bool enabled) {
+	auto &map = getInstance()._installedPlugins;
+	auto it = map.find(id);
+	if (it != map.end()) {
+		it->second.enabled = enabled;
+		getInstance()._pluginsChanged.fire({});
+		save();
+	}
+}
+
 void AyuSettings::setHideFromBlocked(bool val) {
 	if (_hideFromBlocked.current() == val) return;
 	_hideFromBlocked = val;
@@ -1056,6 +1088,11 @@ void to_json(nlohmann::json &j, const AyuSettings &s) {
 		ghostAccounts[std::to_string(key)] = *value;
 	}
 
+	auto installedPlugins = nlohmann::json::object();
+	for (const auto &[key, value] : s._installedPlugins) {
+		installedPlugins[key.toStdString()] = value;
+	}
+
 	j = nlohmann::json{
 		{"ghostModeSettings", ghostAccounts},
 		{"useGlobalGhostMode", s._useGlobalGhostMode.current()},
@@ -1065,6 +1102,8 @@ void to_json(nlohmann::json &j, const AyuSettings &s) {
 		{"shadowBanIds", s._shadowBanIds},
 		{"filtersEnabled", s._filtersEnabled.current()},
 		{"filtersEnabledInChats", s._filtersEnabledInChats.current()},
+		{"pluginsEnabled", s._pluginsEnabled.current()},
+		{"installedPlugins", installedPlugins},
 		{"hideFromBlocked", s._hideFromBlocked.current()},
 		{"semiTransparentDeletedMessages", s._semiTransparentDeletedMessages.current()},
 		{"disableAds", s._disableAds.current()},
@@ -1165,6 +1204,15 @@ void from_json(const nlohmann::json &j, AyuSettings &s) {
 	s._shadowBanIds = j.value("shadowBanIds", defaults._shadowBanIds);
 	s._filtersEnabled = j.value("filtersEnabled", defaults._filtersEnabled.current());
 	s._filtersEnabledInChats = j.value("filtersEnabledInChats", defaults._filtersEnabledInChats.current());
+	s._pluginsEnabled = j.value("pluginsEnabled", defaults._pluginsEnabled.current());
+	if (j.contains("installedPlugins") && j["installedPlugins"].is_object()) {
+		s._installedPlugins.clear();
+		for (auto &[key, value] : j["installedPlugins"].items()) {
+			InstalledPlugin p;
+			value.get_to(p);
+			s._installedPlugins[QString::fromStdString(key)] = p;
+		}
+	}
 	s._hideFromBlocked = j.value("hideFromBlocked", defaults._hideFromBlocked.current());
 	s._semiTransparentDeletedMessages = j.value("semiTransparentDeletedMessages", defaults._semiTransparentDeletedMessages.current());
 	s._disableAds = j.value("disableAds", defaults._disableAds.current());

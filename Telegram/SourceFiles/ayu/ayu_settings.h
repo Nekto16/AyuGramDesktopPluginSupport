@@ -8,6 +8,7 @@
 
 #include "ayu/libs/json.hpp"
 #include "ayu/libs/json_ext.hpp"
+#include "rpl/event_stream.h"
 #include "rpl/lifetime.h"
 #include "rpl/producer.h"
 #include "rpl/variable.h"
@@ -237,6 +238,44 @@ private:
 void to_json(nlohmann::json &j, const MessageShotSettings &s);
 void from_json(const nlohmann::json &j, MessageShotSettings &s);
 
+struct InstalledPlugin {
+	QString id;
+	QString name;
+	QString description;
+	QString author;
+	QString version;
+	QString icon;
+	QString requirements;
+	QString filePath;
+	bool enabled = true;
+};
+
+inline void to_json(nlohmann::json &j, const InstalledPlugin &p) {
+	j = nlohmann::json{
+		{"id", p.id},
+		{"name", p.name},
+		{"description", p.description},
+		{"author", p.author},
+		{"version", p.version},
+		{"icon", p.icon},
+		{"requirements", p.requirements},
+		{"filePath", p.filePath},
+		{"enabled", p.enabled}
+	};
+}
+
+inline void from_json(const nlohmann::json &j, InstalledPlugin &p) {
+	if (j.contains("id") && j["id"].is_string()) p.id = QString::fromStdString(j["id"].get<std::string>());
+	if (j.contains("name") && j["name"].is_string()) p.name = QString::fromStdString(j["name"].get<std::string>());
+	if (j.contains("description") && j["description"].is_string()) p.description = QString::fromStdString(j["description"].get<std::string>());
+	if (j.contains("author") && j["author"].is_string()) p.author = QString::fromStdString(j["author"].get<std::string>());
+	if (j.contains("version") && j["version"].is_string()) p.version = QString::fromStdString(j["version"].get<std::string>());
+	if (j.contains("icon") && j["icon"].is_string()) p.icon = QString::fromStdString(j["icon"].get<std::string>());
+	if (j.contains("requirements") && j["requirements"].is_string()) p.requirements = QString::fromStdString(j["requirements"].get<std::string>());
+	if (j.contains("filePath") && j["filePath"].is_string()) p.filePath = QString::fromStdString(j["filePath"].get<std::string>());
+	if (j.contains("enabled") && j["enabled"].is_boolean()) p.enabled = j["enabled"].get<bool>();
+}
+
 class AyuSettings {
 public:
 	AyuSettings(const AyuSettings &) = delete;
@@ -272,6 +311,13 @@ public:
 	[[nodiscard]] bool saveForBots() const { return _saveForBots.current(); }
 	[[nodiscard]] bool filtersEnabled() const { return _filtersEnabled.current(); }
 	[[nodiscard]] bool filtersEnabledInChats() const { return _filtersEnabledInChats.current(); }
+	[[nodiscard]] bool pluginsEnabled() const { return _pluginsEnabled.current(); }
+	[[nodiscard]] const std::map<QString, InstalledPlugin> &installedPlugins() const { return _installedPlugins; }
+	[[nodiscard]] bool isPluginInstalled(const QString &id) const { return _installedPlugins.find(id) != _installedPlugins.end(); }
+	void installPlugin(const InstalledPlugin &plugin);
+	void uninstallPlugin(const QString &id);
+	void setPluginEnabled(const QString &id, bool enabled);
+	static QString pluginsDirectory();
 	[[nodiscard]] bool hideFromBlocked() const { return _hideFromBlocked.current(); }
 	[[nodiscard]] bool semiTransparentDeletedMessages() const { return _semiTransparentDeletedMessages.current(); }
 	[[nodiscard]] bool disableAds() const { return _disableAds.current(); }
@@ -356,6 +402,7 @@ public:
 	void setSaveForBots(bool val);
 	void setFiltersEnabled(bool val);
 	void setFiltersEnabledInChats(bool val);
+	void setPluginsEnabled(bool val);
 	void setHideFromBlocked(bool val);
 	void setSemiTransparentDeletedMessages(bool val);
 	void setDisableAds(bool val);
@@ -447,6 +494,9 @@ public:
 	[[nodiscard]] rpl::producer<bool> filtersEnabledChanges() const { return _filtersEnabled.changes(); }
 	[[nodiscard]] rpl::producer<bool> filtersEnabledInChatsValue() const { return _filtersEnabledInChats.value(); }
 	[[nodiscard]] rpl::producer<bool> filtersEnabledInChatsChanges() const { return _filtersEnabledInChats.changes(); }
+	[[nodiscard]] rpl::producer<bool> pluginsEnabledValue() const { return _pluginsEnabled.value(); }
+	[[nodiscard]] rpl::producer<bool> pluginsEnabledChanges() const { return _pluginsEnabled.changes(); }
+	[[nodiscard]] rpl::producer<> pluginsChanged() const { return _pluginsChanged.events(); }
 	[[nodiscard]] rpl::producer<bool> hideFromBlockedValue() const { return _hideFromBlocked.value(); }
 	[[nodiscard]] rpl::producer<bool> hideFromBlockedChanges() const { return _hideFromBlocked.changes(); }
 	[[nodiscard]] rpl::producer<bool> semiTransparentDeletedMessagesValue() const { return _semiTransparentDeletedMessages.value(); }
@@ -618,6 +668,9 @@ private:
 	std::unordered_set<int64> _shadowBanIds;
 	rpl::variable<bool> _filtersEnabled = false;
 	rpl::variable<bool> _filtersEnabledInChats = false;
+	rpl::variable<bool> _pluginsEnabled = true;
+	std::map<QString, InstalledPlugin> _installedPlugins;
+	rpl::event_stream<> _pluginsChanged;
 	rpl::variable<bool> _hideFromBlocked = false;
 	rpl::variable<bool> _semiTransparentDeletedMessages = false;
 	rpl::variable<bool> _disableAds = true;

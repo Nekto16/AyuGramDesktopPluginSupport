@@ -6,6 +6,9 @@
 // Copyright @Radolyn, 2026
 #include "ayu/ui/boxes/plugin_info_box.h"
 
+#include "ayu/ayu_settings.h"
+#include <QtCore/QDir>
+#include <QtCore/QFile>
 #include "apiwrap.h"
 #include "core/file_utilities.h"
 #include "core/ui_integration.h"
@@ -341,12 +344,49 @@ void FillPluginInfoBox(
 
 	Ui::AddSkip(box->verticalLayout());
 
-	box->verticalLayout()->add(
-		object_ptr<Ui::FlatLabel>(
+	const auto isInstalled = AyuSettings::getInstance().isPluginInstalled(metadata.id);
+
+	const auto actionButton = box->verticalLayout()->add(
+		object_ptr<Ui::RoundButton>(
 			box->verticalLayout(),
-			tr::ayu_PluginsNotAvailable(),
-			st::boxDividerLabel),
+			rpl::single(isInstalled ? tr::ayu_PluginUninstall(tr::now) : tr::ayu_PluginInstall(tr::now)),
+			isInstalled ? st::attentionBoxButton : st::defaultBoxButton),
 		st::boxRowPadding);
+
+	actionButton->setClickedCallback([=] {
+		if (AyuSettings::getInstance().isPluginInstalled(metadata.id)) {
+			auto plugins = AyuSettings::getInstance().installedPlugins();
+			auto it = plugins.find(metadata.id);
+			if (it != plugins.end() && QFile::exists(it->second.filePath)) {
+				QFile::remove(it->second.filePath);
+			}
+			AyuSettings::getInstance().uninstallPlugin(metadata.id);
+			controller->showToast(tr::ayu_PluginUninstalledToast(tr::now));
+		} else {
+			const auto pluginsDir = AyuSettings::pluginsDirectory();
+			QDir().mkpath(pluginsDir);
+			const auto targetPath = pluginsDir + metadata.id + u".plugin"_q;
+			if (QFile::exists(targetPath)) {
+				QFile::remove(targetPath);
+			}
+			QFile::copy(pluginPath, targetPath);
+
+			InstalledPlugin plugin;
+			plugin.id = metadata.id;
+			plugin.name = metadata.name;
+			plugin.description = metadata.description;
+			plugin.author = metadata.author;
+			plugin.version = metadata.version;
+			plugin.icon = metadata.icon;
+			plugin.requirements = metadata.requirements.join(u", "_q);
+			plugin.filePath = targetPath;
+			plugin.enabled = true;
+
+			AyuSettings::getInstance().installPlugin(plugin);
+			controller->showToast(tr::ayu_PluginInstalledToast(tr::now));
+		}
+		box->closeBox();
+	});
 
 	Ui::AddSkip(box->verticalLayout());
 

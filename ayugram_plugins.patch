@@ -1,0 +1,666 @@
+diff --git a/Telegram/CMakeLists.txt b/Telegram/CMakeLists.txt
+index 3ac3f4b..21dc800 100644
+--- a/Telegram/CMakeLists.txt
++++ b/Telegram/CMakeLists.txt
+@@ -166,6 +166,10 @@ set(ayugram_files
+         ayu/ui/settings/settings_main.h
+         ayu/ui/settings/settings_other.cpp
+         ayu/ui/settings/settings_other.h
++        ayu/ui/settings/settings_plugins.cpp
++        ayu/ui/settings/settings_plugins.h
++        ayu/features/plugins/plugins_engine.cpp
++        ayu/features/plugins/plugins_engine.h
+         ayu/ui/settings/filters/settings_filters_list.cpp
+         ayu/ui/settings/filters/settings_filters_list.h
+         ayu/ui/settings/filters/per_dialog_filter.cpp
+diff --git a/Telegram/Resources/langs/lang.strings b/Telegram/Resources/langs/lang.strings
+index 7380587..c4a55a8 100644
+--- a/Telegram/Resources/langs/lang.strings
++++ b/Telegram/Resources/langs/lang.strings
+@@ -8363,6 +8363,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+ "ayu_PluginNoDescription" = "No description provided.";
+ "ayu_PluginNoAuthor" = "Unknown Author";
+ "ayu_PluginsNotAvailable" = "Plugins are not supported by AyuGram Desktop yet.";
++"ayu_CategoryPlugins" = "Plugins";
++"ayu_PluginsHeader" = "Plugins";
++"ayu_PluginsDescription" = "Extend AyuGram functionality with installed Python scripts (.plugin files).";
++"ayu_PluginsEnabled" = "Enable Plugin System";
++"ayu_OpenPluginsFolder" = "Open Plugins Folder";
++"ayu_PluginsInstalledList" = "Installed Plugins";
++"ayu_NoPluginsInstalled" = "No plugins installed yet. Open any .plugin file in Telegram to install.";
++"ayu_PluginInstall" = "Install Plugin";
++"ayu_PluginUninstall" = "Uninstall Plugin";
++"ayu_PluginStatusInstalled" = "Status: Installed";
++"ayu_PluginInstalledToast" = "Plugin installed successfully!";
++"ayu_PluginUninstalledToast" = "Plugin uninstalled.";
++"ayu_PythonStatusFound" = "Python interpreter found on system.";
++"ayu_PythonStatusNotFound" = "Python interpreter not found. Python 3 is required to run scripts.";
+ "ayu_SessionTerminated" = "Session **{item}** was terminated. You may still browse cached messages.";
+ "ayu_InvalidConnectionLayerNote" = "You should re-login due to an error during the update.";
+ "ayu_LocalPremiumNotice" = "You're using **local** Telegram Premium.\nIt **won't** give you any benefits.\n**Enjoy the star near your nickname!**";
+diff --git a/Telegram/SourceFiles/ayu/ayu_infra.cpp b/Telegram/SourceFiles/ayu/ayu_infra.cpp
+index 2fa8a2a..927e365 100644
+--- a/Telegram/SourceFiles/ayu/ayu_infra.cpp
++++ b/Telegram/SourceFiles/ayu/ayu_infra.cpp
+@@ -11,6 +11,7 @@
+ #include "ayu/ayu_ui_settings.h"
+ #include "ayu/ayu_worker.h"
+ #include "ayu/data/ayu_database.h"
++#include "ayu/features/plugins/plugins_engine.h"
+ #include "ayu/ui/ayu_logo.h"
+ #include "features/translator/ayu_translator.h"
+ #include "lang/lang_instance.h"
+@@ -48,6 +49,10 @@ void initDatabase() {
+ 	AyuDatabase::initialize();
+ }
+ 
++void initPlugins() {
++	AyuFeatures::Plugins::start();
++}
++
+ void initWorker() {
+ 	AyuWorker::initialize();
+ }
+@@ -71,6 +76,7 @@ void init() {
+ 	initLang();
+ 	initDatabase();
+ 	initUiSettings();
++	initPlugins();
+ 	initIcon();
+ 	initWorker();
+ 	initRCManager();
+diff --git a/Telegram/SourceFiles/ayu/ayu_settings.cpp b/Telegram/SourceFiles/ayu/ayu_settings.cpp
+index 2280020..0463dd3 100644
+--- a/Telegram/SourceFiles/ayu/ayu_settings.cpp
++++ b/Telegram/SourceFiles/ayu/ayu_settings.cpp
+@@ -562,6 +562,38 @@ void AyuSettings::setFiltersEnabledInChats(bool val) {
+ 	save();
+ }
+ 
++void AyuSettings::setPluginsEnabled(bool val) {
++	if (_pluginsEnabled.current() == val) return;
++	_pluginsEnabled = val;
++	save();
++}
++
++QString AyuSettings::pluginsDirectory() {
++	return cWorkingDir() + u"tdata/ayu_plugins/"_q;
++}
++
++void AyuSettings::installPlugin(const InstalledPlugin &plugin) {
++	getInstance()._installedPlugins[plugin.id] = plugin;
++	getInstance()._pluginsChanged.fire({});
++	save();
++}
++
++void AyuSettings::uninstallPlugin(const QString &id) {
++	getInstance()._installedPlugins.erase(id);
++	getInstance()._pluginsChanged.fire({});
++	save();
++}
++
++void AyuSettings::setPluginEnabled(const QString &id, bool enabled) {
++	auto &map = getInstance()._installedPlugins;
++	auto it = map.find(id);
++	if (it != map.end()) {
++		it->second.enabled = enabled;
++		getInstance()._pluginsChanged.fire({});
++		save();
++	}
++}
++
+ void AyuSettings::setHideFromBlocked(bool val) {
+ 	if (_hideFromBlocked.current() == val) return;
+ 	_hideFromBlocked = val;
+@@ -1056,6 +1088,11 @@ void to_json(nlohmann::json &j, const AyuSettings &s) {
+ 		ghostAccounts[std::to_string(key)] = *value;
+ 	}
+ 
++	auto installedPlugins = nlohmann::json::object();
++	for (const auto &[key, value] : s._installedPlugins) {
++		installedPlugins[key.toStdString()] = value;
++	}
++
+ 	j = nlohmann::json{
+ 		{"ghostModeSettings", ghostAccounts},
+ 		{"useGlobalGhostMode", s._useGlobalGhostMode.current()},
+@@ -1065,6 +1102,8 @@ void to_json(nlohmann::json &j, const AyuSettings &s) {
+ 		{"shadowBanIds", s._shadowBanIds},
+ 		{"filtersEnabled", s._filtersEnabled.current()},
+ 		{"filtersEnabledInChats", s._filtersEnabledInChats.current()},
++		{"pluginsEnabled", s._pluginsEnabled.current()},
++		{"installedPlugins", installedPlugins},
+ 		{"hideFromBlocked", s._hideFromBlocked.current()},
+ 		{"semiTransparentDeletedMessages", s._semiTransparentDeletedMessages.current()},
+ 		{"disableAds", s._disableAds.current()},
+@@ -1165,6 +1204,15 @@ void from_json(const nlohmann::json &j, AyuSettings &s) {
+ 	s._shadowBanIds = j.value("shadowBanIds", defaults._shadowBanIds);
+ 	s._filtersEnabled = j.value("filtersEnabled", defaults._filtersEnabled.current());
+ 	s._filtersEnabledInChats = j.value("filtersEnabledInChats", defaults._filtersEnabledInChats.current());
++	s._pluginsEnabled = j.value("pluginsEnabled", defaults._pluginsEnabled.current());
++	if (j.contains("installedPlugins") && j["installedPlugins"].is_object()) {
++		s._installedPlugins.clear();
++		for (auto &[key, value] : j["installedPlugins"].items()) {
++			InstalledPlugin p;
++			value.get_to(p);
++			s._installedPlugins[QString::fromStdString(key)] = p;
++		}
++	}
+ 	s._hideFromBlocked = j.value("hideFromBlocked", defaults._hideFromBlocked.current());
+ 	s._semiTransparentDeletedMessages = j.value("semiTransparentDeletedMessages", defaults._semiTransparentDeletedMessages.current());
+ 	s._disableAds = j.value("disableAds", defaults._disableAds.current());
+diff --git a/Telegram/SourceFiles/ayu/ayu_settings.h b/Telegram/SourceFiles/ayu/ayu_settings.h
+index 97a0439..45f3fb1 100644
+--- a/Telegram/SourceFiles/ayu/ayu_settings.h
++++ b/Telegram/SourceFiles/ayu/ayu_settings.h
+@@ -8,6 +8,7 @@
+ 
+ #include "ayu/libs/json.hpp"
+ #include "ayu/libs/json_ext.hpp"
++#include "rpl/event_stream.h"
+ #include "rpl/lifetime.h"
+ #include "rpl/producer.h"
+ #include "rpl/variable.h"
+@@ -237,6 +238,44 @@ private:
+ void to_json(nlohmann::json &j, const MessageShotSettings &s);
+ void from_json(const nlohmann::json &j, MessageShotSettings &s);
+ 
++struct InstalledPlugin {
++	QString id;
++	QString name;
++	QString description;
++	QString author;
++	QString version;
++	QString icon;
++	QString requirements;
++	QString filePath;
++	bool enabled = true;
++};
++
++inline void to_json(nlohmann::json &j, const InstalledPlugin &p) {
++	j = nlohmann::json{
++		{"id", p.id},
++		{"name", p.name},
++		{"description", p.description},
++		{"author", p.author},
++		{"version", p.version},
++		{"icon", p.icon},
++		{"requirements", p.requirements},
++		{"filePath", p.filePath},
++		{"enabled", p.enabled}
++	};
++}
++
++inline void from_json(const nlohmann::json &j, InstalledPlugin &p) {
++	if (j.contains("id") && j["id"].is_string()) p.id = QString::fromStdString(j["id"].get<std::string>());
++	if (j.contains("name") && j["name"].is_string()) p.name = QString::fromStdString(j["name"].get<std::string>());
++	if (j.contains("description") && j["description"].is_string()) p.description = QString::fromStdString(j["description"].get<std::string>());
++	if (j.contains("author") && j["author"].is_string()) p.author = QString::fromStdString(j["author"].get<std::string>());
++	if (j.contains("version") && j["version"].is_string()) p.version = QString::fromStdString(j["version"].get<std::string>());
++	if (j.contains("icon") && j["icon"].is_string()) p.icon = QString::fromStdString(j["icon"].get<std::string>());
++	if (j.contains("requirements") && j["requirements"].is_string()) p.requirements = QString::fromStdString(j["requirements"].get<std::string>());
++	if (j.contains("filePath") && j["filePath"].is_string()) p.filePath = QString::fromStdString(j["filePath"].get<std::string>());
++	if (j.contains("enabled") && j["enabled"].is_boolean()) p.enabled = j["enabled"].get<bool>();
++}
++
+ class AyuSettings {
+ public:
+ 	AyuSettings(const AyuSettings &) = delete;
+@@ -272,6 +311,13 @@ public:
+ 	[[nodiscard]] bool saveForBots() const { return _saveForBots.current(); }
+ 	[[nodiscard]] bool filtersEnabled() const { return _filtersEnabled.current(); }
+ 	[[nodiscard]] bool filtersEnabledInChats() const { return _filtersEnabledInChats.current(); }
++	[[nodiscard]] bool pluginsEnabled() const { return _pluginsEnabled.current(); }
++	[[nodiscard]] const std::map<QString, InstalledPlugin> &installedPlugins() const { return _installedPlugins; }
++	[[nodiscard]] bool isPluginInstalled(const QString &id) const { return _installedPlugins.find(id) != _installedPlugins.end(); }
++	void installPlugin(const InstalledPlugin &plugin);
++	void uninstallPlugin(const QString &id);
++	void setPluginEnabled(const QString &id, bool enabled);
++	static QString pluginsDirectory();
+ 	[[nodiscard]] bool hideFromBlocked() const { return _hideFromBlocked.current(); }
+ 	[[nodiscard]] bool semiTransparentDeletedMessages() const { return _semiTransparentDeletedMessages.current(); }
+ 	[[nodiscard]] bool disableAds() const { return _disableAds.current(); }
+@@ -356,6 +402,7 @@ public:
+ 	void setSaveForBots(bool val);
+ 	void setFiltersEnabled(bool val);
+ 	void setFiltersEnabledInChats(bool val);
++	void setPluginsEnabled(bool val);
+ 	void setHideFromBlocked(bool val);
+ 	void setSemiTransparentDeletedMessages(bool val);
+ 	void setDisableAds(bool val);
+@@ -447,6 +494,9 @@ public:
+ 	[[nodiscard]] rpl::producer<bool> filtersEnabledChanges() const { return _filtersEnabled.changes(); }
+ 	[[nodiscard]] rpl::producer<bool> filtersEnabledInChatsValue() const { return _filtersEnabledInChats.value(); }
+ 	[[nodiscard]] rpl::producer<bool> filtersEnabledInChatsChanges() const { return _filtersEnabledInChats.changes(); }
++	[[nodiscard]] rpl::producer<bool> pluginsEnabledValue() const { return _pluginsEnabled.value(); }
++	[[nodiscard]] rpl::producer<bool> pluginsEnabledChanges() const { return _pluginsEnabled.changes(); }
++	[[nodiscard]] rpl::producer<> pluginsChanged() const { return _pluginsChanged.events(); }
+ 	[[nodiscard]] rpl::producer<bool> hideFromBlockedValue() const { return _hideFromBlocked.value(); }
+ 	[[nodiscard]] rpl::producer<bool> hideFromBlockedChanges() const { return _hideFromBlocked.changes(); }
+ 	[[nodiscard]] rpl::producer<bool> semiTransparentDeletedMessagesValue() const { return _semiTransparentDeletedMessages.value(); }
+@@ -618,6 +668,9 @@ private:
+ 	std::unordered_set<int64> _shadowBanIds;
+ 	rpl::variable<bool> _filtersEnabled = false;
+ 	rpl::variable<bool> _filtersEnabledInChats = false;
++	rpl::variable<bool> _pluginsEnabled = true;
++	std::map<QString, InstalledPlugin> _installedPlugins;
++	rpl::event_stream<> _pluginsChanged;
+ 	rpl::variable<bool> _hideFromBlocked = false;
+ 	rpl::variable<bool> _semiTransparentDeletedMessages = false;
+ 	rpl::variable<bool> _disableAds = true;
+diff --git a/Telegram/SourceFiles/ayu/features/plugins/plugins_engine.cpp b/Telegram/SourceFiles/ayu/features/plugins/plugins_engine.cpp
+new file mode 100644
+index 0000000..76d7053
+--- /dev/null
++++ b/Telegram/SourceFiles/ayu/features/plugins/plugins_engine.cpp
+@@ -0,0 +1,58 @@
++// This is the source code of AyuGram for Desktop.
++//
++// We do not and cannot prevent the use of our code,
++// but be respectful and credit the original author.
++//
++// Copyright @Radolyn, 2026
++#include "ayu/features/plugins/plugins_engine.h"
++
++#include "ayu/ayu_settings.h"
++#include <QtCore/QFile>
++#include <QtCore/QProcess>
++
++namespace AyuFeatures::Plugins {
++
++bool isPythonAvailable() {
++	QProcess process;
++	process.start(u"python"_q, { u"--version"_q });
++	if (!process.waitForFinished(2000)) {
++		process.start(u"python3"_q, { u"--version"_q });
++		return process.waitForFinished(2000) && (process.exitStatus() == QProcess::NormalExit);
++	}
++	return (process.exitStatus() == QProcess::NormalExit);
++}
++
++QString pythonVersion() {
++	QProcess process;
++	process.start(u"python"_q, { u"--version"_q });
++	if (!process.waitForFinished(2000)) {
++		process.start(u"python3"_q, { u"--version"_q });
++		if (!process.waitForFinished(2000)) {
++			return u"Not Found"_q;
++		}
++	}
++	auto out = QString::fromUtf8(process.readAllStandardOutput()).trimmed();
++	if (out.isEmpty()) {
++		out = QString::fromUtf8(process.readAllStandardError()).trimmed();
++	}
++	return out.isEmpty() ? u"Unknown"_q : out;
++}
++
++void start() {
++	const auto &settings = AyuSettings::getInstance();
++	if (!settings.pluginsEnabled()) {
++		return;
++	}
++	for (const auto &[id, plugin] : settings.installedPlugins()) {
++		if (plugin.enabled && QFile::exists(plugin.filePath)) {
++			auto *process = new QProcess();
++			QObject::connect(process, Fn<void(int, QProcess::ExitStatus)>(
++				[process](int, QProcess::ExitStatus) {
++					process->deleteLater();
++				}));
++			process->start(u"python"_q, { plugin.filePath });
++		}
++	}
++}
++
++} // namespace AyuFeatures::Plugins
+diff --git a/Telegram/SourceFiles/ayu/features/plugins/plugins_engine.h b/Telegram/SourceFiles/ayu/features/plugins/plugins_engine.h
+new file mode 100644
+index 0000000..b8ad267
+--- /dev/null
++++ b/Telegram/SourceFiles/ayu/features/plugins/plugins_engine.h
+@@ -0,0 +1,17 @@
++// This is the source code of AyuGram for Desktop.
++//
++// We do not and cannot prevent the use of our code,
++// but be respectful and credit the original author.
++//
++// Copyright @Radolyn, 2026
++#pragma once
++
++#include <QString>
++
++namespace AyuFeatures::Plugins {
++
++void start();
++[[nodiscard]] bool isPythonAvailable();
++[[nodiscard]] QString pythonVersion();
++
++} // namespace AyuFeatures::Plugins
+diff --git a/Telegram/SourceFiles/ayu/ui/boxes/plugin_info_box.cpp b/Telegram/SourceFiles/ayu/ui/boxes/plugin_info_box.cpp
+index 390311c..e1dc647 100644
+--- a/Telegram/SourceFiles/ayu/ui/boxes/plugin_info_box.cpp
++++ b/Telegram/SourceFiles/ayu/ui/boxes/plugin_info_box.cpp
+@@ -6,6 +6,9 @@
+ // Copyright @Radolyn, 2026
+ #include "ayu/ui/boxes/plugin_info_box.h"
+ 
++#include "ayu/ayu_settings.h"
++#include <QtCore/QDir>
++#include <QtCore/QFile>
+ #include "apiwrap.h"
+ #include "core/file_utilities.h"
+ #include "core/ui_integration.h"
+@@ -341,13 +344,50 @@ void FillPluginInfoBox(
+ 
+ 	Ui::AddSkip(box->verticalLayout());
+ 
+-	box->verticalLayout()->add(
+-		object_ptr<Ui::FlatLabel>(
++	const auto isInstalled = AyuSettings::getInstance().isPluginInstalled(metadata.id);
++
++	const auto actionButton = box->verticalLayout()->add(
++		object_ptr<Ui::RoundButton>(
+ 			box->verticalLayout(),
+-			tr::ayu_PluginsNotAvailable(),
+-			st::boxDividerLabel),
++			rpl::single(isInstalled ? tr::ayu_PluginUninstall(tr::now) : tr::ayu_PluginInstall(tr::now)),
++			isInstalled ? st::attentionBoxButton : st::defaultBoxButton),
+ 		st::boxRowPadding);
+ 
++	actionButton->setClickedCallback([=] {
++		if (AyuSettings::getInstance().isPluginInstalled(metadata.id)) {
++			auto plugins = AyuSettings::getInstance().installedPlugins();
++			auto it = plugins.find(metadata.id);
++			if (it != plugins.end() && QFile::exists(it->second.filePath)) {
++				QFile::remove(it->second.filePath);
++			}
++			AyuSettings::getInstance().uninstallPlugin(metadata.id);
++			controller->showToast(tr::ayu_PluginUninstalledToast(tr::now));
++		} else {
++			const auto pluginsDir = AyuSettings::pluginsDirectory();
++			QDir().mkpath(pluginsDir);
++			const auto targetPath = pluginsDir + metadata.id + u".plugin"_q;
++			if (QFile::exists(targetPath)) {
++				QFile::remove(targetPath);
++			}
++			QFile::copy(pluginPath, targetPath);
++
++			InstalledPlugin plugin;
++			plugin.id = metadata.id;
++			plugin.name = metadata.name;
++			plugin.description = metadata.description;
++			plugin.author = metadata.author;
++			plugin.version = metadata.version;
++			plugin.icon = metadata.icon;
++			plugin.requirements = metadata.requirements.join(u", "_q);
++			plugin.filePath = targetPath;
++			plugin.enabled = true;
++
++			AyuSettings::getInstance().installPlugin(plugin);
++			controller->showToast(tr::ayu_PluginInstalledToast(tr::now));
++		}
++		box->closeBox();
++	});
++
+ 	Ui::AddSkip(box->verticalLayout());
+ 
+ 	const auto closeButton = box->addButton(
+diff --git a/Telegram/SourceFiles/ayu/ui/settings/settings_main.cpp b/Telegram/SourceFiles/ayu/ui/settings/settings_main.cpp
+index a4b1e7a..94fc7ba 100644
+--- a/Telegram/SourceFiles/ayu/ui/settings/settings_main.cpp
++++ b/Telegram/SourceFiles/ayu/ui/settings/settings_main.cpp
+@@ -16,6 +16,7 @@
+ #include "ayu/ui/settings/settings_filters.h"
+ #include "ayu/ui/settings/settings_general.h"
+ #include "ayu/ui/settings/settings_other.h"
++#include "ayu/ui/settings/settings_plugins.h"
+ #include "core/version.h"
+ #include "settings/settings_builder.h"
+ #include "settings/settings_common.h"
+@@ -125,6 +126,11 @@ void BuildCategories(SectionBuilder &builder) {
+ 		.targetSection = AyuChats::Id(),
+ 		.icon = { &st::menuIconChatBubble },
+ 	});
++	builder.addSectionButton({
++		.title = tr::ayu_CategoryPlugins(),
++		.targetSection = AyuPlugins::Id(),
++		.icon = { &st::menuIconBotCommands },
++	});
+ 	builder.addSectionButton({
+ 		.title = tr::ayu_CategoryOther(),
+ 		.targetSection = AyuOther::Id(),
+diff --git a/Telegram/SourceFiles/ayu/ui/settings/settings_plugins.cpp b/Telegram/SourceFiles/ayu/ui/settings/settings_plugins.cpp
+new file mode 100644
+index 0000000..d3082eb
+--- /dev/null
++++ b/Telegram/SourceFiles/ayu/ui/settings/settings_plugins.cpp
+@@ -0,0 +1,195 @@
++// This is the source code of AyuGram for Desktop.
++//
++// We do not and cannot prevent the use of our code,
++// but be respectful and credit the original author.
++//
++// Copyright @Radolyn, 2026
++#include "ayu/ui/settings/settings_plugins.h"
++
++#include "lang_auto.h"
++#include "ayu/ayu_settings.h"
++#include "ayu/features/plugins/plugins_engine.h"
++#include "ayu/ui/boxes/plugin_info_box.h"
++#include "ayu/ui/settings/ayu_builder.h"
++#include "ayu/ui/settings/settings_main.h"
++#include "core/file_utilities.h"
++#include "settings/settings_builder.h"
++#include "styles/style_menu_icons.h"
++#include "styles/style_settings.h"
++#include "styles/style_widgets.h"
++#include "ui/widgets/buttons.h"
++#include "ui/widgets/labels.h"
++#include "ui/widgets/popup_menu.h"
++#include "ui/wrap/vertical_layout.h"
++#include "window/window_session_controller.h"
++
++#include <QtCore/QFile>
++
++namespace Settings {
++
++using namespace Builder;
++using namespace AyuBuilder;
++
++namespace {
++
++void BuildPluginsList(SectionBuilder &builder) {
++	const auto controller = builder.controller();
++
++	builder.addSkip();
++	builder.addSubsectionTitle(tr::ayu_PluginsInstalledList());
++
++	builder.add([=](const WidgetContext &ctx) -> SectionBuilder::WidgetToAdd {
++		auto wrap = object_ptr<Ui::VerticalLayout>(ctx.container);
++		const auto container = wrap.data();
++
++		const auto fillList = [=] {
++			auto children = container->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly);
++			for (auto *w : children) {
++				delete w;
++			}
++			const auto &plugins = AyuSettings::getInstance().installedPlugins();
++			if (plugins.empty()) {
++				container->add(
++					object_ptr<Ui::FlatLabel>(
++						container,
++						tr::ayu_NoPluginsInstalled(),
++						st::boxLabel),
++					st::boxRowPadding);
++			} else {
++				for (const auto &[id, plugin] : plugins) {
++					const auto statusStr = plugin.enabled ? u""_q : tr::lng_settings_auto_night_disabled(tr::now);
++					const auto label = plugin.name + u" (v"_q + plugin.version + u")"_q + (statusStr.isEmpty() ? u""_q : u" - "_q + statusStr);
++					const auto button = container->add(
++						object_ptr<Ui::SettingsButton>(
++							container,
++							rpl::single(label),
++							st::settingsButtonNoIcon));
++					if (!plugin.enabled) {
++						button->setColorOverride(st::storiesComposeGrayText->c);
++					}
++					button->setClickedCallback([=, id = plugin.id] {
++						auto *menu = new Ui::PopupMenu(button, st::popupMenuWithIcons);
++						menu->setAttribute(Qt::WA_DeleteOnClose);
++
++						menu->addAction(
++							tr::lng_info_about(tr::now),
++							[=] {
++								const auto map = AyuSettings::getInstance().installedPlugins();
++								const auto it = map.find(id);
++								if (it != map.end()) {
++									Ui::PluginMetadata md;
++									md.id = it->second.id;
++									md.name = it->second.name;
++									md.description = it->second.description;
++									md.author = it->second.author;
++									md.version = it->second.version;
++									md.icon = it->second.icon;
++									for (const auto &req : it->second.requirements.split(',')) {
++										const auto trimmed = req.trimmed();
++										if (!trimmed.isEmpty()) md.requirements.append(trimmed);
++									}
++									Ui::ShowPluginInfoBox(controller, it->second.filePath, md);
++								}
++							},
++							&st::menuIconInfo);
++
++						const auto map = AyuSettings::getInstance().installedPlugins();
++						const auto it = map.find(id);
++						const auto isEnabled = (it != map.end()) && it->second.enabled;
++
++						menu->addAction(
++							isEnabled ? tr::lng_settings_auto_night_disable(tr::now) : tr::lng_sure_enable(tr::now),
++							[=] {
++								AyuSettings::getInstance().setPluginEnabled(id, !isEnabled);
++							},
++							isEnabled ? &st::menuIconBlock : &st::menuIconUnblock);
++
++						menu->addSeparator();
++
++						menu->addAction(
++							tr::lng_theme_delete(tr::now),
++							[=] {
++								const auto map2 = AyuSettings::getInstance().installedPlugins();
++								const auto it2 = map2.find(id);
++								if (it2 != map2.end() && QFile::exists(it2->second.filePath)) {
++									QFile::remove(it2->second.filePath);
++								}
++								AyuSettings::getInstance().uninstallPlugin(id);
++							},
++							&st::menuIconDelete);
++
++						menu->popup(QCursor::pos());
++					});
++				}
++			}
++		};
++
++		fillList();
++		AyuSettings::getInstance().pluginsChanged() | rpl::on_next([=] {
++			fillList();
++		}, container->lifetime());
++
++		return { .widget = std::move(wrap), .align = style::al_top };
++	});
++
++	builder.addSkip();
++	builder.addButton({
++		.id = u"ayu/openPluginsFolder"_q,
++		.title = tr::ayu_OpenPluginsFolder(),
++		.icon = { &st::menuIconShowInFolder },
++		.onClick = [=] {
++			File::ShowInFolder(AyuSettings::pluginsDirectory());
++		},
++	});
++	builder.addSkip();
++	builder.addDividerText(AyuFeatures::Plugins::isPythonAvailable()
++		? tr::ayu_PythonStatusFound()
++		: tr::ayu_PythonStatusNotFound());
++}
++
++const auto kMeta = BuildHelper({
++	.id = AyuPlugins::Id(),
++	.parentId = AyuMain::Id(),
++	.title = &tr::ayu_CategoryPlugins,
++	.icon = &st::menuIconBotCommands,
++}, [](SectionBuilder &builder) {
++	auto ayu = AyuSectionBuilder(builder);
++
++	builder.addSkip();
++	ayu.addSettingToggle({
++		.id = u"ayu/pluginsEnabled"_q,
++		.title = tr::ayu_PluginsEnabled(),
++		.getter = &AyuSettings::pluginsEnabled,
++		.setter = &AyuSettings::setPluginsEnabled,
++		.icon = { &st::menuIconBotCommands },
++	});
++	builder.addSkip();
++	builder.addDividerText(tr::ayu_PluginsDescription());
++
++	BuildPluginsList(builder);
++});
++
++} // namespace
++
++rpl::producer<QString> AyuPlugins::title() {
++	return tr::ayu_CategoryPlugins();
++}
++
++AyuPlugins::AyuPlugins(
++	QWidget *parent,
++	not_null<Window::SessionController*> controller)
++: Section(parent, controller) {
++	setupContent();
++}
++
++void AyuPlugins::setupContent() {
++	const auto content = Ui::CreateChild<Ui::VerticalLayout>(this);
++	build(content, kMeta.build);
++	Ui::ResizeFitChild(this, content);
++}
++
++Type AyuPluginsId() {
++	return AyuPlugins::Id();
++}
++
++} // namespace Settings
+diff --git a/Telegram/SourceFiles/ayu/ui/settings/settings_plugins.h b/Telegram/SourceFiles/ayu/ui/settings/settings_plugins.h
+new file mode 100644
+index 0000000..08b62a3
+--- /dev/null
++++ b/Telegram/SourceFiles/ayu/ui/settings/settings_plugins.h
+@@ -0,0 +1,29 @@
++// This is the source code of AyuGram for Desktop.
++//
++// We do not and cannot prevent the use of our code,
++// but be respectful and credit the original author.
++//
++// Copyright @Radolyn, 2026
++#pragma once
++
++#include "settings/settings_common.h"
++
++namespace Window {
++class SessionController;
++}
++
++namespace Settings {
++
++class AyuPlugins : public Section<AyuPlugins> {
++public:
++	AyuPlugins(QWidget *parent, not_null<Window::SessionController*> controller);
++
++	[[nodiscard]] rpl::producer<QString> title() override;
++
++private:
++	void setupContent();
++};
++
++[[nodiscard]] Type AyuPluginsId();
++
++} // namespace Settings
