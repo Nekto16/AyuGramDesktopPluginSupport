@@ -9,16 +9,42 @@ jobs:
   build:
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Prepare
+
+      - name: Setup Visual Studio MSVC Env
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Create external folders
+        shell: cmd
+        run: |
+          mkdir ..\ThirdParty
+          mkdir ..\Libraries
+
+      - name: Prepare Libraries
         shell: cmd
         run: call Telegram\build\prepare\win.bat
+
       - name: Configure
         shell: cmd
         run: |
           cd Telegram
           call configure.bat x64 -D TDESKTOP_API_ID=2040 -D TDESKTOP_API_HASH=b18441a1ff607e10a989891a5462e627
-      - name: Build
+
+      - name: Build Project
         run: cmake --build out --config Release
+
+      - name: Upload Executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: AyuGram-exe
+          path: out/Release/AyuGram.exe
