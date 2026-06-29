@@ -1,3 +1,50 @@
+diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml
+new file mode 100644
+index 0000000..63cc3b2
+--- /dev/null
++++ b/.github/workflows/build.yml
+@@ -0,0 +1,41 @@
++name: Build AyuGram Desktop
++
++on:
++  push:
++    branches: [ dev, main ]
++  workflow_dispatch:
++
++jobs:
++  build-windows:
++    runs-on: windows-2022
++    steps:
++      - name: Checkout repository
++        uses: actions/checkout@v4
++        with:
++          submodules: recursive
++
++      - name: Setup Python
++        uses: actions/setup-python@v5
++        with:
++          python-version: '3.11'
++
++      - name: Prepare libraries
++        shell: cmd
++        run: |
++          call Telegram\build\prepare\win.bat
++
++      - name: Configure project
++        shell: cmd
++        run: |
++          cd Telegram
++          call configure.bat x64 -D TDESKTOP_API_ID=2040 -D TDESKTOP_API_HASH=b18441a1ff607e10a989891a5462e627
++
++      - name: Build project
++        run: |
++          cmake --build out --config Release
++
++      - name: Upload AyuGram Executable
++        uses: actions/upload-artifact@v4
++        with:
++          name: AyuGram-exe
++          path: out/Release/AyuGram.exe
 diff --git a/Telegram/CMakeLists.txt b/Telegram/CMakeLists.txt
 index 3ac3f4b..21dc800 100644
 --- a/Telegram/CMakeLists.txt
